@@ -1,34 +1,24 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"golang.org/x/crypto/ssh"
 	"mcloud.chinaunicom.cn/remote/pkg/connect"
-	"mcloud.chinaunicom.cn/remote/pkg/exec"
 )
 
 func main() {
-	http.HandleFunc("/exec", func(writer http.ResponseWriter, request *http.Request) {
-		err := handle(writer, request, exec.Exec)
-		if err != nil {
-			errHandle(err, writer)
-		}
-	})
-
-	http.HandleFunc("/execPipe", func(writer http.ResponseWriter, request *http.Request) {
-		err := handle(writer, request, exec.ExecPipe)
-		if err != nil {
-			errHandle(err, writer)
-		}
-	})
-
+	http.HandleFunc("/exec", handle)
 	go func() {
 		fmt.Println("Start to listening the incoming requests on http address: 0.0.0.0:9080")
 		if err := http.ListenAndServe(":9080", nil); err != nil {
@@ -45,38 +35,90 @@ func main() {
 	<-quit
 }
 
-type ExecFunc func(string, *ssh.Session, http.ResponseWriter) error
-
-func handle(writer http.ResponseWriter, request *http.Request, execFunc ExecFunc) error {
+func handle(writer http.ResponseWriter, request *http.Request) {
 	var (
 		err     error
+		message string
 		conn    *connect.Connect
 		script  []byte
 		session *ssh.Session
+
+		entity struct {
+			Success bool   `json:"success"`
+			Message string `json:"message"`
+		}
 	)
+
+	defer func() {
+		writer.WriteHeader(http.StatusOK)
+		data, _ := json.Marshal(entity)
+		writer.Write(data)
+	}()
+
 	script, err = ioutil.ReadAll(request.Body)
 	if err != nil {
-		return err
+		msg := fmt.Sprintf("读取脚本数据失败:%s", err.Error())
+		log.Println(msg)
+		entity.Message = msg
+		return
 	}
 	conn, err = connect.NewConnect(request)
 	if err != nil {
-		return err
+		msg := fmt.Sprintf("创建远程连接失败:%s", err.Error())
+		log.Println(msg)
+		entity.Message = msg
+		return
 	}
 	session, err = conn.Session()
 	if err != nil {
-		return err
+		msg := fmt.Sprintf("创建远程Session失败:%s", err.Error())
+		log.Println(msg)
+		entity.Message = msg
+		return
 	}
 	defer session.Close()
-	err = execFunc(string(script), session, writer)
+
+	message, err = exec(string(script), session)
 	if err != nil {
-		return err
+		msg := fmt.Sprintf("执行失败:%s", err.Error())
+		log.Println(msg)
+		entity.Message = msg
+		return
 	}
 
-	return nil
+	entity.Message = message
+	entity.Success = true
 }
 
-func errHandle(err error, w http.ResponseWriter) {
-	log.Println(err.Error())
-	w.WriteHeader(http.StatusInternalServerError)
-	w.Write([]byte(err.Error()))
+// Exec 执行脚本，执行结束后统一返回
+func exec(script string, session *ssh.Session) (string, error) {
+	var (
+		err     error
+		message string
+		stdout  io.Reader
+		wg      sync.WaitGroup
+	)
+
+	stdout, err = session.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		reader := bufio.NewReader(stdout)
+		for {
+			read, err := reader.ReadString('\n')
+			if err != nil || err == io.EOF {
+				return
+			}
+			message = fmt.Sprintf("%s%s", message, read)
+		}
+	}()
+	err = session.Run(script)
+	if err != nil {
+		return "", err
+	}
+	wg.Wait()
+	return message, nil
 }
