@@ -3,10 +3,11 @@ package exec
 import (
 	"bufio"
 	"fmt"
-	"golang.org/x/crypto/ssh"
 	"io"
 	"net/http"
 	"sync"
+
+	"golang.org/x/crypto/ssh"
 )
 
 // ExecPipe 执行脚本，实时返回
@@ -51,9 +52,5 @@ func ExecPipe(script string, session *ssh.Session, writer http.ResponseWriter) e
 func Exec(script string, session *ssh.Session, writer http.ResponseWriter) error {
 	session.Stdout = writer
 	session.Stderr = writer
-	err := session.Run(script)
-	if err != nil {
-		writer.Write([]byte(err.Error()))
-	}
-	return err
+	return session.Run(script)
 }
