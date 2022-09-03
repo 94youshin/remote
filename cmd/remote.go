@@ -51,6 +51,7 @@ func handle(writer http.ResponseWriter, request *http.Request) {
 
 	defer func() {
 		writer.WriteHeader(http.StatusOK)
+		writer.Header().Set("content-type", "application/json")
 		data, _ := json.Marshal(entity)
 		writer.Write(data)
 	}()
