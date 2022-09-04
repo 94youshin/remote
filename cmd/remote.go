@@ -1,17 +1,14 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 
 	"golang.org/x/crypto/ssh"
@@ -38,11 +35,11 @@ func main() {
 
 func handle(writer http.ResponseWriter, request *http.Request) {
 	var (
-		err             error
-		script, message string
-		conn            *connect.Connect
-		scriptByte      []byte
-		session         *ssh.Session
+		err                 error
+		script              string
+		conn                *connect.Connect
+		scriptByte, message []byte
+		session             *ssh.Session
 
 		entity struct {
 			Success bool   `json:"success"`
@@ -83,48 +80,15 @@ func handle(writer http.ResponseWriter, request *http.Request) {
 	}
 	defer session.Close()
 
-	message, err = exec(script, session)
+	// 执行命令
+	message, err = session.CombinedOutput(script)
 	if err != nil {
-		msg := fmt.Sprintf("执行失败:%s%s", message,err.Error())
+		msg := fmt.Sprintf("执行失败:%s%s", message, err.Error())
 		log.Println(msg)
 		entity.Message = msg
 		return
 	}
 
-	entity.Message = message
+	entity.Message = string(message)
 	entity.Success = true
-}
-
-// Exec 执行脚本，执行结束后统一返回
-func exec(script string, session *ssh.Session) (string, error) {
-	var (
-		err     error
-		message string
-		stdout  io.Reader
-		wg      sync.WaitGroup
-	)
-
-	stdout, err = session.StdoutPipe()
-	if err != nil {
-		return "", err
-	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		reader := bufio.NewReader(stdout)
-		for {
-			read, err := reader.ReadString('\n')
-			if err != nil || err == io.EOF {
-				return
-			}
-			message = fmt.Sprintf("%s%s", message, read)
-		}
-	}()
-	err = session.Run(script)
-	wg.Wait()
-	if err != nil {
-		return message, err
-	}
-
-	return message, nil
 }
