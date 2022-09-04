@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -37,11 +38,11 @@ func main() {
 
 func handle(writer http.ResponseWriter, request *http.Request) {
 	var (
-		err     error
-		message string
-		conn    *connect.Connect
-		script  []byte
-		session *ssh.Session
+		err             error
+		script, message string
+		conn            *connect.Connect
+		scriptByte      []byte
+		session         *ssh.Session
 
 		entity struct {
 			Success bool   `json:"success"`
@@ -56,7 +57,10 @@ func handle(writer http.ResponseWriter, request *http.Request) {
 		writer.Write(data)
 	}()
 
-	script, err = ioutil.ReadAll(request.Body)
+	scriptByte, err = ioutil.ReadAll(request.Body)
+
+	script = strings.ReplaceAll(string(scriptByte), "\r\n", "\n")
+
 	if err != nil {
 		msg := fmt.Sprintf("读取脚本数据失败:%s", err.Error())
 		log.Println(msg)
@@ -79,9 +83,9 @@ func handle(writer http.ResponseWriter, request *http.Request) {
 	}
 	defer session.Close()
 
-	message, err = exec(string(script), session)
+	message, err = exec(script, session)
 	if err != nil {
-		msg := fmt.Sprintf("执行失败:%s", err.Error())
+		msg := fmt.Sprintf("执行失败:%s%s", message,err.Error())
 		log.Println(msg)
 		entity.Message = msg
 		return
@@ -117,10 +121,10 @@ func exec(script string, session *ssh.Session) (string, error) {
 		}
 	}()
 	err = session.Run(script)
-	if err != nil {
-		return "", err
-	}
 	wg.Wait()
+	if err != nil {
+		return message, err
+	}
 
 	return message, nil
 }
